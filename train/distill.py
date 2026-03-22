@@ -230,7 +230,7 @@ def run_single_experiment(
     )
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[int(args.epochs * 0.5), int(args.epochs * 0.75)],
+        milestones=[150, 180, 210],
         gamma=0.1,
     )
     train_losses = []
@@ -240,7 +240,6 @@ def run_single_experiment(
     test_accs = []
     test_top5_accs = []
     best_acc = 0.0
-    no_improve_epochs = 0
     log(
         f"Start distill dataset={dataset_name} ratio={ratio:.1f} "
         f"method={method} samples={len(indices)} epochs={args.epochs}",
@@ -276,19 +275,10 @@ def run_single_experiment(
         test_top5_accs.append(test_top5)
         if test_acc > best_acc:
             best_acc = test_acc
-            no_improve_epochs = 0
             log(
                 f"[{dataset_name}] ratio={ratio:.1f} method={method} "
                 f"new best test_acc={best_acc:.4f} at epoch={epoch}",
             )
-        else:
-            no_improve_epochs += 1
-        if args.patience > 0 and no_improve_epochs >= args.patience:
-            log(
-                f"[{dataset_name}] ratio={ratio:.1f} method={method} "
-                f"early stopping at epoch={epoch} no_improve_epochs={no_improve_epochs}",
-            )
-            break
         log(
             f"[{dataset_name}] ratio={ratio:.1f} method={method} "
             f"epoch={epoch}/{args.epochs} "
@@ -441,22 +431,17 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=64,
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=200,
+        default=240,
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.1,
-    )
-    parser.add_argument(
-        "--patience",
-        type=int,
-        default=50,
+        default=0.05,
     )
     parser.add_argument(
         "--temperature",
