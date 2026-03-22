@@ -117,7 +117,6 @@ def train_one_epoch_distill(
     dkd_n_weight,
     device,
     epoch,
-    ce_weight,
     warmup,
 ):
     student.train()
@@ -133,10 +132,9 @@ def train_one_epoch_distill(
         with torch.no_grad():
             teacher_logits = teacher(images)
         student_logits = student(images)
-        ce_loss = ce_criterion(student_logits, targets)
         if method == "KD":
             loss_kd = kd_loss_fn(student_logits, teacher_logits, temperature)
-            loss = alpha * loss_kd + (1.0 - alpha) * ce_loss
+            loss = alpha * loss_kd
         else:
             loss_dkd = dkd_loss_fn(
                 student_logits,
@@ -150,7 +148,7 @@ def train_one_epoch_distill(
                 dkd_weight = min(float(epoch) / float(warmup), 1.0)
             else:
                 dkd_weight = 1.0
-            loss = ce_weight * ce_loss + dkd_weight * loss_dkd
+            loss = dkd_weight * loss_dkd
         loss.backward()
         optimizer.step()
         running_loss += loss.item() * images.size(0)
@@ -261,7 +259,6 @@ def run_single_experiment(
             args.dkd_n_weight,
             device,
             epoch,
-            args.ce_weight,
             args.warmup,
         )
         test_loss, test_acc, test_top5 = evaluate_student(
@@ -455,11 +452,6 @@ def parse_args():
         "--lr",
         type=float,
         default=0.1,
-    )
-    parser.add_argument(
-        "--ce-weight",
-        type=float,
-        default=1.0,
     )
     parser.add_argument(
         "--patience",
