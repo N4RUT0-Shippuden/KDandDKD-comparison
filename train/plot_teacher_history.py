@@ -69,7 +69,12 @@ def plot_history(target_path, output_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", type=str)
+    parser.add_argument(
+        "path",
+        type=str,
+        nargs="?",
+        default="./checkpoints",
+    )
     parser.add_argument(
         "--output-dir",
         type=str,
@@ -81,4 +86,3 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     plot_history(args.path, args.output_dir)
-
