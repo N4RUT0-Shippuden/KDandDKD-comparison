@@ -121,6 +121,8 @@ def train_one_epoch_distill(
     optimizer,
     ce_criterion,
     method,
+    kd_weight,
+    dkd_weight,
     temperature,
     dkd_t_weight,
     dkd_n_weight,
@@ -141,9 +143,10 @@ def train_one_epoch_distill(
             teacher_logits = teacher(images)
         student_logits = student(images)
         if method == "KD":
-            loss = kd_loss_fn(student_logits, teacher_logits, temperature)
+            base_loss = kd_loss_fn(student_logits, teacher_logits, temperature)
+            loss = kd_weight * base_loss
         else:
-            loss = dkd_loss_fn(
+            base_loss = dkd_loss_fn(
                 student_logits,
                 teacher_logits,
                 targets,
@@ -151,6 +154,7 @@ def train_one_epoch_distill(
                 dkd_t_weight,
                 dkd_n_weight,
             )
+            loss = dkd_weight * base_loss
         loss.backward()
         optimizer.step()
         running_loss += loss.item() * images.size(0)
@@ -229,7 +233,7 @@ def run_single_experiment(
     )
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[150, 180, 210],
+        milestones=[100, 150],
         gamma=0.1,
     )
     train_losses = []
@@ -251,6 +255,8 @@ def run_single_experiment(
             optimizer,
             ce_criterion,
             method,
+            args.kd_weight,
+            args.dkd_weight,
             args.temperature,
             args.dkd_t_weight,
             args.dkd_n_weight,
@@ -378,22 +384,32 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=128,
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=240,
+        default=200,
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.05,
+        default=0.1,
     )
     parser.add_argument(
         "--temperature",
         type=float,
         default=4.0,
+    )
+    parser.add_argument(
+        "--kd-weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--dkd-weight",
+        type=float,
+        default=1.0,
     )
     parser.add_argument(
         "--dkd-t-weight",
