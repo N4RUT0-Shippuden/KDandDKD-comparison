@@ -1,0 +1,504 @@
+import os
+import argparse
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+from model.teacher import get_teacher
+from model.student import get_student
+
+
+def set_random_seed(seed):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+class RemappedSubset(torch.utils.data.Dataset):
+    def __init__(self, dataset, indices, label_map):
+        self.dataset = dataset
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.label_map = dict(label_map)
+
+    def __len__(self):
+        return int(self.indices.shape[0])
+
+    def __getitem__(self, idx):
+        x, y = self.dataset[int(self.indices[int(idx)])]
+        return x, int(self.label_map[int(y)])
+
+
+def _parse_classes(classes_str):
+    parts = [p.strip() for p in classes_str.split(",") if p.strip() != ""]
+    class_ids = [int(p) for p in parts]
+    unique = sorted(set(class_ids))
+    if len(class_ids) != len(unique):
+        raise ValueError(f"classes contains duplicates: {classes_str}")
+    if len(class_ids) != 10:
+        raise ValueError(f"classes must contain exactly 10 ids, got {len(class_ids)}")
+    for c in class_ids:
+        if c < 0 or c > 99:
+            raise ValueError(f"class id out of range [0, 99]: {c}")
+    return class_ids
+
+
+def _classes_tag(class_ids):
+    return "classes" + "-".join(str(c) for c in class_ids)
+
+
+def get_datasets(data_root):
+    transform_train = transforms.Compose(
+        [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.4914, 0.4822, 0.4465],
+                std=[0.247, 0.243, 0.261],
+            ),
+        ]
+    )
+    transform_test = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.4914, 0.4822, 0.4465],
+                std=[0.247, 0.243, 0.261],
+            ),
+        ]
+    )
+    train_dataset = datasets.CIFAR100(
+        root=data_root,
+        train=True,
+        download=True,
+        transform=transform_train,
+    )
+    test_dataset = datasets.CIFAR100(
+        root=data_root,
+        train=False,
+        download=True,
+        transform=transform_test,
+    )
+    return train_dataset, test_dataset
+
+
+def _filter_and_remap(dataset, class_ids):
+    class_set = set(int(c) for c in class_ids)
+    indices = [i for i, y in enumerate(dataset.targets) if int(y) in class_set]
+    label_map = {int(c): idx for idx, c in enumerate(class_ids)}
+    return np.asarray(indices, dtype=np.int64), label_map
+
+
+def kd_loss_fn(student_logits, teacher_logits, temperature):
+    log_p = F.log_softmax(student_logits / temperature, dim=1)
+    q = F.softmax(teacher_logits / temperature, dim=1)
+    loss = F.kl_div(log_p, q, reduction="batchmean") * temperature * temperature
+    return loss
+
+
+def dkd_loss_fn(student_logits, teacher_logits, targets, temperature, t_weight, n_weight):
+    batch_size = targets.shape[0]
+    gt_mask = _get_gt_mask(student_logits, targets)
+    other_mask = _get_other_mask(student_logits, targets)
+    pred_student = F.softmax(student_logits / temperature, dim=1)
+    pred_teacher = F.softmax(teacher_logits / temperature, dim=1)
+    pred_student = cat_mask(pred_student, gt_mask, other_mask)
+    pred_teacher = cat_mask(pred_teacher, gt_mask, other_mask)
+    log_pred_student = torch.log(pred_student)
+    loss_tckd = (
+        F.kl_div(log_pred_student, pred_teacher, reduction="sum")
+        * (temperature**2)
+        / batch_size
+    )
+    pred_teacher_part2 = F.softmax(
+        teacher_logits / temperature - 1000.0 * gt_mask,
+        dim=1,
+    )
+    log_pred_student_part2 = F.log_softmax(
+        student_logits / temperature - 1000.0 * gt_mask,
+        dim=1,
+    )
+    loss_nckd = (
+        F.kl_div(log_pred_student_part2, pred_teacher_part2, reduction="sum")
+        * (temperature**2)
+        / batch_size
+    )
+    return t_weight * loss_tckd + n_weight * loss_nckd
+
+
+def _get_gt_mask(logits, target):
+    target = target.reshape(-1)
+    mask = torch.zeros_like(logits).scatter_(1, target.unsqueeze(1), 1).bool()
+    return mask
+
+
+def _get_other_mask(logits, target):
+    target = target.reshape(-1)
+    mask = torch.ones_like(logits).scatter_(1, target.unsqueeze(1), 0).bool()
+    return mask
+
+
+def cat_mask(t, mask1, mask2):
+    t1 = (t * mask1).sum(dim=1, keepdim=True)
+    t2 = (t * mask2).sum(dim=1, keepdim=True)
+    rt = torch.cat([t1, t2], dim=1)
+    return rt
+
+
+def train_one_epoch_distill(
+    student,
+    teacher,
+    loader,
+    optimizer,
+    ce_criterion,
+    method,
+    kd_weight,
+    dkd_weight,
+    temperature,
+    dkd_t_weight,
+    dkd_n_weight,
+    device,
+    epoch,
+):
+    student.train()
+    teacher.eval()
+    running_loss = 0.0
+    correct1 = 0
+    correct5 = 0
+    total = 0
+    for images, targets in loader:
+        images = images.to(device)
+        targets = targets.to(device)
+        optimizer.zero_grad()
+        with torch.no_grad():
+            teacher_logits = teacher(images)
+        student_logits = student(images)
+        if method == "KD":
+            base_loss = kd_loss_fn(student_logits, teacher_logits, temperature)
+            loss = kd_weight * base_loss
+        else:
+            base_loss = dkd_loss_fn(
+                student_logits,
+                teacher_logits,
+                targets,
+                temperature,
+                dkd_t_weight,
+                dkd_n_weight,
+            )
+            loss = dkd_weight * base_loss
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item() * images.size(0)
+        _, predicted = student_logits.max(1)
+        _, top5_pred = student_logits.topk(5, 1, True, True)
+        correct_top1 = predicted.eq(targets)
+        correct_top5 = top5_pred.eq(targets.view(-1, 1).expand_as(top5_pred))
+        total += targets.size(0)
+        correct1 += correct_top1.sum().item()
+        correct5 += correct_top5.sum().item()
+    epoch_loss = running_loss / total
+    epoch_acc = correct1 / total
+    epoch_top5 = correct5 / total
+    return epoch_loss, epoch_acc, epoch_top5
+
+
+def evaluate_student(model, loader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    correct1 = 0
+    correct5 = 0
+    total = 0
+    with torch.no_grad():
+        for images, targets in loader:
+            images = images.to(device)
+            targets = targets.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, targets)
+            running_loss += loss.item() * images.size(0)
+            _, predicted = outputs.max(1)
+            _, top5_pred = outputs.topk(5, 1, True, True)
+            correct_top1 = predicted.eq(targets)
+            correct_top5 = top5_pred.eq(targets.view(-1, 1).expand_as(top5_pred))
+            total += targets.size(0)
+            correct1 += correct_top1.sum().item()
+            correct5 += correct_top5.sum().item()
+    epoch_loss = running_loss / total
+    epoch_acc = correct1 / total
+    epoch_top5 = correct5 / total
+    return epoch_loss, epoch_acc, epoch_top5
+
+
+def run_single_experiment(
+    ratio,
+    method,
+    train_dataset,
+    test_loader,
+    class_ids,
+    tag,
+    args,
+    device,
+    log,
+):
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    num_classes = 10
+    teacher = get_teacher(num_classes=num_classes)
+    student = get_student(num_classes=num_classes)
+    teacher_ckpt_path = os.path.join(
+        args.teacher_ckpt_dir,
+        f"teacher_cifar100_tenclasses_{tag}_ratio{ratio:.1f}_best.pth",
+    )
+    checkpoint = torch.load(teacher_ckpt_path, map_location="cpu")
+    teacher.load_state_dict(checkpoint["model_state_dict"])
+    teacher = teacher.to(device)
+    student = student.to(device)
+    ce_criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(
+        student.parameters(),
+        lr=args.lr,
+        momentum=0.9,
+        weight_decay=5e-4,
+    )
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=[int(args.epochs * 0.5), int(args.epochs * 0.75)],
+        gamma=0.1,
+    )
+    train_losses = []
+    accs = []
+    train_top5_accs = []
+    test_losses = []
+    test_accs = []
+    test_top5_accs = []
+    best_acc = 0.0
+    log(
+        f"Start distill CIFAR100 ten classes tag={tag} teacher_ratio={ratio:.1f} "
+        f"method={method} epochs={args.epochs}",
+    )
+    for epoch in range(1, args.epochs + 1):
+        epoch_loss, epoch_acc, epoch_top5 = train_one_epoch_distill(
+            student,
+            teacher,
+            train_loader,
+            optimizer,
+            ce_criterion,
+            method,
+            args.kd_weight,
+            args.dkd_weight,
+            args.temperature,
+            args.dkd_t_weight,
+            args.dkd_n_weight,
+            device,
+            epoch,
+        )
+        test_loss, test_acc, test_top5 = evaluate_student(
+            student,
+            test_loader,
+            ce_criterion,
+            device,
+        )
+        scheduler.step()
+        train_losses.append(epoch_loss)
+        accs.append(epoch_acc)
+        train_top5_accs.append(epoch_top5)
+        test_losses.append(test_loss)
+        test_accs.append(test_acc)
+        test_top5_accs.append(test_top5)
+        if test_acc > best_acc:
+            best_acc = test_acc
+            log(
+                f"[tag={tag} teacher_ratio={ratio:.1f}] method={method} "
+                f"new best test_acc={best_acc:.4f} at epoch={epoch}",
+            )
+        log(
+            f"[tag={tag} teacher_ratio={ratio:.1f}] method={method} "
+            f"epoch={epoch}/{args.epochs} "
+            f"train_loss={epoch_loss:.4f} train_acc={epoch_acc:.4f} train_top5={epoch_top5:.4f} "
+            f"test_loss={test_loss:.4f} test_acc={test_acc:.4f} test_top5={test_top5:.4f}",
+        )
+    os.makedirs(args.save_dir, exist_ok=True)
+    history_dir = os.path.join(
+        args.save_dir,
+        f"distill_cifar100_tenclasses_{tag}_history",
+    )
+    os.makedirs(history_dir, exist_ok=True)
+    history_path = os.path.join(
+        history_dir,
+        f"cifar100_tenclasses_{tag}_teacher_ratio{ratio:.1f}_{method}.npz",
+    )
+    np.savez_compressed(
+        history_path,
+        train_losses=np.array(train_losses, dtype=np.float32),
+        accs=np.array(accs, dtype=np.float32),
+        train_top5_accs=np.array(train_top5_accs, dtype=np.float32),
+        test_losses=np.array(test_losses, dtype=np.float32),
+        test_accs=np.array(test_accs, dtype=np.float32),
+        test_top5_accs=np.array(test_top5_accs, dtype=np.float32),
+        class_ids=np.array(class_ids, dtype=np.int64),
+    )
+    log(
+        f"History saved to {history_path}",
+    )
+
+
+def run_all_experiments(args):
+    set_random_seed(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    class_ids = _parse_classes(args.classes)
+    tag = _classes_tag(class_ids)
+    train_dataset_full, test_dataset_full = get_datasets(args.data_root)
+    train_indices, label_map = _filter_and_remap(train_dataset_full, class_ids)
+    test_indices, _ = _filter_and_remap(test_dataset_full, class_ids)
+    train_subset = RemappedSubset(train_dataset_full, train_indices, label_map)
+    test_subset = RemappedSubset(test_dataset_full, test_indices, label_map)
+    ratios = [i / 10.0 for i in range(10, 0, -1)]
+    methods = ["KD", "DKD"]
+    log_path = args.log_file
+    if not log_path:
+        log_filename = f"distill_cifar100_tenclasses_{tag}_KD-DKD.log"
+        log_path = os.path.join("logs", log_filename)
+    log_dir = os.path.dirname(log_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    log_file = open(log_path, "a", encoding="utf-8")
+    args.log_file = log_path
+
+    def log(message):
+        print(message)
+        if log_file is not None:
+            log_file.write(str(message) + "\n")
+            log_file.flush()
+
+    log("Hyperparameters:")
+    for key, value in sorted(vars(args).items()):
+        log(f"{key}={value}")
+    log(f"class_ids={class_ids} tag={tag}")
+    log(
+        f"Start CIFAR100 ten-classes distillation "
+        f"seed={args.seed} epochs={args.epochs} batch_size={args.batch_size} lr={args.lr} "
+        f"temperature={args.temperature}",
+    )
+    log(
+        f"teacher_ratios={ratios} methods={methods}",
+    )
+    test_loader = DataLoader(
+        test_subset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+    for ratio in ratios:
+        for method in methods:
+            run_single_experiment(
+                ratio,
+                method,
+                train_subset,
+                test_loader,
+                class_ids,
+                tag,
+                args,
+                device,
+                log,
+            )
+    log("All CIFAR100 ten-classes distillation experiments finished")
+    log(f"Logs written to {args.log_file}")
+    if log_file is not None:
+        log_file.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-root",
+        type=str,
+        default="./data",
+    )
+    parser.add_argument(
+        "--classes",
+        type=str,
+        default="0,1,2,3,4,5,6,7,8,9",
+    )
+    parser.add_argument(
+        "--teacher-ckpt-dir",
+        type=str,
+        default="./checkpoints",
+    )
+    parser.add_argument(
+        "--save-dir",
+        type=str,
+        default="./checkpoints",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=128,
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=200,
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=4.0,
+    )
+    parser.add_argument(
+        "--kd-weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--dkd-weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--dkd-t-weight",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--dkd-n-weight",
+        type=float,
+        default=8.0,
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default="",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    run_all_experiments(args)
+
