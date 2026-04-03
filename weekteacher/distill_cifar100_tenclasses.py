@@ -165,6 +165,7 @@ def train_one_epoch_distill(
     dkd_n_weight,
     device,
     epoch,
+    warmup,
 ):
     student.train()
     teacher.eval()
@@ -191,7 +192,11 @@ def train_one_epoch_distill(
                 dkd_t_weight,
                 dkd_n_weight,
             )
-            loss = dkd_weight * base_loss
+            if warmup > 0:
+                ramp = min(float(epoch) / float(warmup), 1.0)
+            else:
+                ramp = 1.0
+            loss = dkd_weight * ramp * base_loss
         loss.backward()
         optimizer.step()
         running_loss += loss.item() * images.size(0)
@@ -301,6 +306,7 @@ def run_single_experiment(
             args.dkd_n_weight,
             device,
             epoch,
+            args.warmup,
         )
         test_loss, test_acc, test_top5 = evaluate_student(
             student,
@@ -459,6 +465,11 @@ def parse_args():
         "--temperature",
         type=float,
         default=4.0,
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=20,
     )
     parser.add_argument(
         "--kd-weight",
