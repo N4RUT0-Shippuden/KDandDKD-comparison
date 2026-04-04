@@ -58,7 +58,7 @@ def plot_student_cifar100_allclasses(history_dir, output_dir):
         ax.plot(epochs_kd, kd_accs, label="KD")
         ax.plot(epochs_dkd, dkd_accs, label="DKD")
         ax.set_xlabel("Epoch")
-        ax.set_ylabel("Test Top-1 Accuracy")
+        ax.set_ylabel("Top-1 Accuracy")
         ax.set_title(f"CIFAR100 Student (All Classes) - Ratio {ratio:.1f}")
         ax.legend()
         fig.tight_layout()
