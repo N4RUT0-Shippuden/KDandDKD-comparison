@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 def set_scientific_style():
     mpl.rcParams.update(
         {
-            "figure.figsize": (6, 4),
+            "figure.figsize": (8, 5),
             "font.size": 12,
             "axes.labelsize": 12,
             "axes.titlesize": 12,
