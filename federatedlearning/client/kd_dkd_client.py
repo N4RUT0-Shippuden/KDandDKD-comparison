@@ -122,6 +122,9 @@ class KDDKDClient:
 
     def set_global_student_params(self, global_state_dict):
         self.student.load_state_dict(global_state_dict, strict=True)
+        if hasattr(self, "student_optimizer") and self.student_optimizer is not None:
+            self.student_optimizer.state.clear()
+            self.student_optimizer.zero_grad(set_to_none=True)
 
     def get_student_params(self):
         return self.student.state_dict()

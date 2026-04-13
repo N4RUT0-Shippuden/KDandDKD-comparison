@@ -166,15 +166,29 @@ def evaluate(model, loader, device):
     return top1, top5
 
 
-def average_state_dicts(state_dicts):
+def aggregate_state_dicts(state_dicts, weights=None):
     if not state_dicts:
         return {}
-    avg_state = {}
-    keys = state_dicts[0].keys()
-    for key in keys:
-        stacked = torch.stack([sd[key] for sd in state_dicts], dim=0)
-        avg_state[key] = stacked.mean(dim=0)
-    return avg_state
+    num_models = len(state_dicts)
+    weights = [1.0 / float(num_models)] * num_models
+    base_state = state_dicts[0]
+    global_state = {}
+    for name, tensor in base_state.items():
+        t = tensor.clone()
+        if t.is_floating_point():
+            t.zero_()
+        global_state[name] = t
+    for idx, (w, client_state) in enumerate(zip(weights, state_dicts)):
+        for name, server_tensor in global_state.items():
+            client_tensor = client_state[name]
+            if server_tensor.is_floating_point():
+                server_tensor.add_(client_tensor.to(server_tensor.dtype), alpha=w)
+            elif name.endswith("num_batches_tracked"):
+                if idx == 0:
+                    server_tensor.copy_(client_tensor)
+                else:
+                    server_tensor.copy_(torch.maximum(server_tensor, client_tensor))
+    return global_state
 
 
 def run_federated_kd_dkd(args):
@@ -320,4 +334,4 @@ def run_federated_kd_dkd(args):
                 }
                 wandb.log(metrics, step=round_idx)
             student_states.append(student_state)
-        global_state = average_state_dicts(student_states)
+        global_state = aggregate_state_dicts(student_states)
