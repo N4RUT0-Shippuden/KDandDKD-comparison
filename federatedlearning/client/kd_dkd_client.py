@@ -139,6 +139,86 @@ class KDDKDClient:
         ratio = float(min(r, self.warmup_rounds)) / float(self.warmup_rounds)
         return ratio
 
+    def pretrain_teacher(self, epochs, test_loader=None):
+        for epoch in range(1, int(epochs) + 1):
+            self.teacher.train()
+            running_loss = 0.0
+            total = 0
+            correct1 = 0
+            correct5 = 0
+            for images, targets in self.train_loader:
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+                self.teacher_optimizer.zero_grad()
+                logits = self.teacher(images)
+                loss = F.cross_entropy(logits, targets)
+                loss.backward()
+                self.teacher_optimizer.step()
+                batch_size = targets.size(0)
+                running_loss += loss.item() * batch_size
+                total += batch_size
+                _, predicted = logits.max(1)
+                _, top5_pred = logits.topk(5, 1, True, True)
+                correct_top1 = predicted.eq(targets)
+                correct_top5 = top5_pred.eq(
+                    targets.view(-1, 1).expand_as(top5_pred),
+                )
+                correct1 += correct_top1.sum().item()
+                correct5 += correct_top5.sum().item()
+            if total > 0:
+                epoch_loss = running_loss / float(total)
+                top1 = float(correct1) / float(total) * 100.0
+                top5 = float(correct5) / float(total) * 100.0
+            else:
+                epoch_loss = 0.0
+                top1 = 0.0
+                top5 = 0.0
+            print(
+                "[PRETR][TRAIN] Client:{:2d} Epoch:{:3d} "
+                "TeacherLoss:{:.4f} Top1:{:.2f}% Top5:{:.2f}%".format(
+                    self.client_id,
+                    epoch,
+                    epoch_loss,
+                    top1,
+                    top5,
+                ),
+            )
+            if test_loader is not None:
+                self.teacher.eval()
+                eval_correct1 = 0
+                eval_correct5 = 0
+                eval_total = 0
+                with torch.no_grad():
+                    for images, targets in test_loader:
+                        images = images.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
+                        outputs = self.teacher(images)
+                        batch_size = targets.size(0)
+                        eval_total += batch_size
+                        _, predicted = outputs.max(1)
+                        _, top5_pred = outputs.topk(5, 1, True, True)
+                        correct_top1 = predicted.eq(targets)
+                        correct_top5 = top5_pred.eq(
+                            targets.view(-1, 1).expand_as(top5_pred),
+                        )
+                        eval_correct1 += correct_top1.sum().item()
+                        eval_correct5 += correct_top5.sum().item()
+                if eval_total > 0:
+                    eval_top1 = float(eval_correct1) / float(eval_total) * 100.0
+                    eval_top5 = float(eval_correct5) / float(eval_total) * 100.0
+                else:
+                    eval_top1 = 0.0
+                    eval_top5 = 0.0
+                print(
+                    "[PRETR][EVAL ] Client:{:2d} Epoch:{:3d} "
+                    "TeacherTop1:{:.2f}% TeacherTop5:{:.2f}%".format(
+                        self.client_id,
+                        epoch,
+                        eval_top1,
+                        eval_top5,
+                    ),
+                )
+
     def local_train_one_epoch(self, global_round):
         self.teacher.train()
         self.student.train()
