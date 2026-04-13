@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from freratedlearning.model.teacher import get_teacher
-from freratedlearning.model.student import get_student
+from federatedlearning.model.teacher import get_teacher
+from federatedlearning.model.student import get_student
 
 
 def kd_loss_fn(student_logits, teacher_logits, temperature):
@@ -219,7 +219,7 @@ class KDDKDClient:
             self.teacher_optimizer.zero_grad()
             student_loss.backward()
             teacher_loss.backward()
-            self.student_optimizer.step()
+            self.student_optimizer.step(retain_graph=True)
             self.teacher_optimizer.step()
         if total_samples > 0:
             avg_student_loss = total_student_loss / total_samples

@@ -6,8 +6,8 @@ import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from freratedlearning.client.kd_dkd_client import KDDKDClient
-from freratedlearning.model.student import get_student
+from federatedlearning.client.kd_dkd_client import KDDKDClient
+from federatedlearning.model.student import get_student
 try:
     import wandb
 except ImportError:

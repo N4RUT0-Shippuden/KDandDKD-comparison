@@ -1,6 +1,6 @@
 import argparse
 
-from freratedlearning.server.kd_dkd_server import run_federated_kd_dkd
+from federatedlearning.server.kd_dkd_server import run_federated_kd_dkd
 
 
 def parse_args():
@@ -56,11 +56,6 @@ def parse_args():
         "--num-workers",
         type=int,
         default=2,
-    )
-    parser.add_argument(
-        "--history-dir",
-        type=str,
-        default="",
     )
     parser.add_argument(
         "--seed",
