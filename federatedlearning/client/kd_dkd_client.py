@@ -235,8 +235,6 @@ class KDDKDClient:
             targets = targets.to(self.device, non_blocking=True)
             teacher_logits = self.teacher(images)
             student_logits = self.student(images)
-            ce_student = F.cross_entropy(student_logits, targets)
-            ce_teacher = F.cross_entropy(teacher_logits, targets)
             if self.method == "KD":
                 student_kd = kd_loss_fn(
                     student_logits,
@@ -248,8 +246,8 @@ class KDDKDClient:
                     student_logits,
                     self.temperature,
                 )
-                student_loss = ce_student + self.kd_weight * student_kd
-                teacher_loss = ce_teacher + self.kd_weight * teacher_kd
+                student_loss = self.kd_weight * student_kd
+                teacher_loss = self.kd_weight * teacher_kd
             elif self.method == "DKD":
                 student_dkd = dkd_loss_fn(
                     student_logits,
@@ -267,8 +265,8 @@ class KDDKDClient:
                     self.tckd_weight,
                     self.nckd_weight,
                 )
-                student_loss = ce_student + self.dkd_weight * dkd_coeff * student_dkd
-                teacher_loss = ce_teacher + self.dkd_weight * dkd_coeff * teacher_dkd
+                student_loss = self.dkd_weight * dkd_coeff * student_dkd
+                teacher_loss = self.dkd_weight * dkd_coeff * teacher_dkd
             else:
                 student_kd = kd_loss_fn(
                     student_logits,
@@ -280,8 +278,8 @@ class KDDKDClient:
                     student_logits,
                     self.temperature,
                 )
-                student_loss = ce_student + self.kd_weight * student_kd
-                teacher_loss = ce_teacher + self.kd_weight * teacher_kd
+                student_loss = self.kd_weight * student_kd
+                teacher_loss = self.kd_weight * teacher_kd
             batch_size = targets.size(0)
             total_student_loss += student_loss.item() * batch_size
             total_teacher_loss += teacher_loss.item() * batch_size
