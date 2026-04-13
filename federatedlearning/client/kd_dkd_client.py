@@ -217,9 +217,9 @@ class KDDKDClient:
             total_teacher_correct5 += teacher_correct_top5.sum().item()
             self.student_optimizer.zero_grad()
             self.teacher_optimizer.zero_grad()
-            student_loss.backward()
+            student_loss.backward(retain_graph=True)
             teacher_loss.backward()
-            self.student_optimizer.step(retain_graph=True)
+            self.student_optimizer.step()
             self.teacher_optimizer.step()
         if total_samples > 0:
             avg_student_loss = total_student_loss / total_samples
