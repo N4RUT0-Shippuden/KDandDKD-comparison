@@ -299,8 +299,8 @@ def run_federated_kd_dkd(args):
             )
             print(
                 "[EVAL ] Round:{:3d} Client:{:2d} "
-                "TeacherTestTop1:{:.2f}% TeacherTestTop5:{:.2f}% "
-                "StudentTestTop1:{:.2f}% StudentTestTop5:{:.2f}%".format(
+                "TeacherTop1:{:.2f}% TeacherTop5:{:.2f}% "
+                "StudentTop1:{:.2f}% StudentTop5:{:.2f}%".format(
                     round_idx,
                     client.client_id,
                     teacher_top1 * 100.0,
