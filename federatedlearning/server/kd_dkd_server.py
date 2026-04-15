@@ -253,8 +253,6 @@ def run_federated_kd_dkd(args):
             num_workers=args.num_workers,
         )
         clients.append(client)
-    for client in clients:
-        client.pretrain_teacher(epochs=50, test_loader=test_loader)
     global_student = get_student(num_classes=num_classes).to(device)
     global_state = global_student.state_dict()
     for round_idx in range(1, args.global_rounds + 1):
