@@ -79,12 +79,22 @@ def dkd_loss_fn(student_logits, teacher_logits, targets, temperature, t_weight, 
         * (temperature**2)
         / batch_size
     )
+    teacher_other_logits = refine_as_not_true(
+        teacher_logits,
+        targets,
+        teacher_logits.size(1),
+    )
+    student_other_logits = refine_as_not_true(
+        student_logits,
+        targets,
+        student_logits.size(1),
+    )
     pred_teacher_part2 = F.softmax(
-        teacher_logits / temperature - 1000.0 * gt_mask,
+        teacher_other_logits / temperature,
         dim=1,
     )
     log_pred_student_part2 = F.log_softmax(
-        student_logits / temperature - 1000.0 * gt_mask,
+        student_other_logits / temperature,
         dim=1,
     )
     loss_nckd = (
@@ -112,6 +122,15 @@ def cat_mask(t, mask1, mask2):
     t2 = (t * mask2).sum(dim=1, keepdim=True)
     rt = torch.cat([t1, t2], dim=1)
     return rt
+
+
+def refine_as_not_true(logits, targets, num_classes):
+    nt_positions = torch.arange(0, num_classes, device=logits.device)
+    nt_positions = nt_positions.repeat(logits.size(0), 1)
+    nt_positions = nt_positions[nt_positions[:, :] != targets.view(-1, 1)]
+    nt_positions = nt_positions.view(-1, num_classes - 1)
+    logits = torch.gather(logits, 1, nt_positions)
+    return logits
 
 
 def train_one_epoch_distill(
@@ -390,7 +409,7 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=64,
     )
     parser.add_argument(
         "--epochs",
@@ -400,7 +419,7 @@ def parse_args():
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.1,
+        default=0.05,
     )
     parser.add_argument(
         "--temperature",

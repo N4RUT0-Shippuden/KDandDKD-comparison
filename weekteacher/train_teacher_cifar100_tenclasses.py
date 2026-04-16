@@ -351,7 +351,7 @@ def parse_args():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=64,
     )
     parser.add_argument(
         "--epochs",
@@ -361,7 +361,7 @@ def parse_args():
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.1,
+        default=0.05,
     )
     parser.add_argument(
         "--save-dir",
