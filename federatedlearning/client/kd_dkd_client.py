@@ -138,6 +138,16 @@ class KDDKDClient:
             momentum=0.9,
             weight_decay=5e-4,
         )
+        self.student_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            self.student_optimizer,
+            milestones=[100, 150],
+            gamma=0.1,
+        )
+        self.teacher_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            self.teacher_optimizer,
+            milestones=[100, 150],
+            gamma=0.1,
+        )
 
     def set_global_student_params(self, global_state_dict):
         self.student.load_state_dict(global_state_dict, strict=True)
@@ -245,6 +255,8 @@ class KDDKDClient:
             teacher_loss.backward()
             self.student_optimizer.step()
             self.teacher_optimizer.step()
+        self.student_scheduler.step()
+        self.teacher_scheduler.step()
         if total_samples > 0:
             avg_student_loss = total_student_loss / total_samples
             avg_teacher_loss = total_teacher_loss / total_samples
