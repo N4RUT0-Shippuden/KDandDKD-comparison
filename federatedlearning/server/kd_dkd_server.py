@@ -223,6 +223,10 @@ def run_federated_kd_dkd(args):
     log_file = open(log_path, "a", encoding="utf-8")
     args.log_file = log_path
 
+    output_dir = getattr(args, "output_dir", "./fed_history")
+    os.makedirs(output_dir, exist_ok=True)
+    args.output_dir = output_dir
+
     def log(message):
         print(message)
         if log_file is not None:
