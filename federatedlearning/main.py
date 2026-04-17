@@ -93,6 +93,11 @@ def parse_args():
         default=20,
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./fed_history",
+    )
+    parser.add_argument(
         "--use-wandb",
         action="store_true",
     )

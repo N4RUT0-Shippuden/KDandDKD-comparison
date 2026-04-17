@@ -260,6 +260,20 @@ def run_federated_kd_dkd(args):
             f"===== Global Round {round_idx}/{args.global_rounds} "
             f"mode={args.mode} tag={tag} =====",
         )
+        history = {
+            "round": [],
+            "client": [],
+            "student_loss": [],
+            "teacher_loss": [],
+            "train_student_top1": [],
+            "train_student_top5": [],
+            "train_teacher_top1": [],
+            "train_teacher_top5": [],
+            "eval_student_top1": [],
+            "eval_student_top5": [],
+            "eval_teacher_top1": [],
+            "eval_teacher_top5": [],
+        }
         for client in clients:
             client.set_global_student_params(global_state)
         student_states = []
@@ -307,6 +321,18 @@ def run_federated_kd_dkd(args):
                     student_top5 * 100.0,
                 ),
             )
+            history["round"].append(round_idx)
+            history["client"].append(client_i)
+            history["student_loss"].append(train_stats["student_loss"])
+            history["teacher_loss"].append(train_stats["teacher_loss"])
+            history["train_student_top1"].append(train_stats["student_top1"])
+            history["train_student_top5"].append(train_stats["student_top5"])
+            history["train_teacher_top1"].append(train_stats["teacher_top1"])
+            history["train_teacher_top5"].append(train_stats["teacher_top5"])
+            history["eval_teacher_top1"].append(teacher_top1)
+            history["eval_teacher_top5"].append(teacher_top5)
+            history["eval_student_top1"].append(student_top1)
+            history["eval_student_top5"].append(student_top5)
             if use_wandb:
                 metrics = {
                     f"client_{client_i}/train/student_loss": train_stats[
@@ -335,3 +361,42 @@ def run_federated_kd_dkd(args):
                 wandb.log(metrics, step=round_idx)
             student_states.append(student_state)
         global_state = aggregate_state_dicts(student_states)
+        np.savez_compressed(
+            os.path.join(args.output_dir, f"fed_history_round{round_idx}.npz"),
+            round=np.array(history["round"], dtype=np.int32),
+            client=np.array(history["client"], dtype=np.int32),
+            student_loss=np.array(history["student_loss"], dtype=np.float32),
+            teacher_loss=np.array(history["teacher_loss"], dtype=np.float32),
+            train_student_top1=np.array(
+                history["train_student_top1"],
+                dtype=np.float32,
+            ),
+            train_student_top5=np.array(
+                history["train_student_top5"],
+                dtype=np.float32,
+            ),
+            train_teacher_top1=np.array(
+                history["train_teacher_top1"],
+                dtype=np.float32,
+            ),
+            train_teacher_top5=np.array(
+                history["train_teacher_top5"],
+                dtype=np.float32,
+            ),
+            eval_student_top1=np.array(
+                history["eval_student_top1"],
+                dtype=np.float32,
+            ),
+            eval_student_top5=np.array(
+                history["eval_student_top5"],
+                dtype=np.float32,
+            ),
+            eval_teacher_top1=np.array(
+                history["eval_teacher_top1"],
+                dtype=np.float32,
+            ),
+            eval_teacher_top5=np.array(
+                history["eval_teacher_top5"],
+                dtype=np.float32,
+            ),
+        )
