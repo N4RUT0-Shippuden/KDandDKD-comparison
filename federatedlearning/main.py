@@ -116,6 +116,11 @@ def parse_args():
         type=str,
         default="",
     )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default="",
+    )
     return parser.parse_args()
 
 

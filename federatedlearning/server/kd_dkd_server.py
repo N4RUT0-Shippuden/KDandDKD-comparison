@@ -210,6 +210,29 @@ def run_federated_kd_dkd(args):
         train_dataset, test_dataset, num_classes, class_ids, tag = (
             get_cifar100_tenclasses_datasets(args.data_root, args.classes)
         )
+    log_path = getattr(args, "log_file", "")
+    if not log_path:
+        mode_tag = f"{args.mode}_{tag}"
+        log_filename = (
+            f"fed_{args.method}_{mode_tag}_clients{args.num_clients}_seed{args.seed}.log"
+        )
+        log_path = os.path.join("logs", log_filename)
+    log_dir = os.path.dirname(log_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    log_file = open(log_path, "a", encoding="utf-8")
+    args.log_file = log_path
+
+    def log(message):
+        print(message)
+        if log_file is not None:
+            log_file.write(str(message) + "\n")
+            log_file.flush()
+
+    log("FedKD-DKD Hyperparameters:")
+    for key, value in sorted(vars(args).items()):
+        log(f"{key}={value}")
+
     rng = np.random.RandomState(args.seed)
     num_samples = len(train_dataset)
     all_indices = np.arange(num_samples)
@@ -255,10 +278,15 @@ def run_federated_kd_dkd(args):
         clients.append(client)
     global_student = get_student(num_classes=num_classes).to(device)
     global_state = global_student.state_dict()
+    log(
+        f"Start federated KD/DKD mode={args.mode} tag={tag} "
+        f"method={args.method} clients={args.num_clients} rounds={args.global_rounds} "
+        f"seed={args.seed}"
+    )
     for round_idx in range(1, args.global_rounds + 1):
-        print(
+        log(
             f"===== Global Round {round_idx}/{args.global_rounds} "
-            f"mode={args.mode} tag={tag} =====",
+            f"mode={args.mode} tag={tag} ====="
         )
         history = {
             "round": [],
@@ -294,7 +322,7 @@ def run_federated_kd_dkd(args):
             )
             round_i = round_idx - 1
             client_i = client.client_id
-            print(
+            log(
                 "[TRAIN] Round:{:3d} Client:{:2d} "
                 "StudentLoss:{:.4f} TeacherLoss:{:.4f} "
                 "StudentTop1:{:.2f}% StudentTop5:{:.2f}% "
@@ -309,7 +337,7 @@ def run_federated_kd_dkd(args):
                     train_stats["teacher_top5"] * 100.0,
                 ),
             )
-            print(
+            log(
                 "[EVAL ] Round:{:3d} Client:{:2d} "
                 "TeacherTop1:{:.2f}% TeacherTop5:{:.2f}% "
                 "StudentTop1:{:.2f}% StudentTop5:{:.2f}%".format(
@@ -400,3 +428,9 @@ def run_federated_kd_dkd(args):
                 dtype=np.float32,
             ),
         )
+    log("Federated KD/DKD training finished")
+    log(f"Logs written to {args.log_file}")
+    if use_wandb:
+        wandb.finish()
+    if log_file is not None:
+        log_file.close()
