@@ -223,7 +223,9 @@ def run_federated_kd_dkd(args):
     log_file = open(log_path, "a", encoding="utf-8")
     args.log_file = log_path
 
-    output_dir = getattr(args, "output_dir", "./fed_history")
+    base_output_dir = getattr(args, "output_dir", "./fed_history")
+    exp_subdir = f"{args.method}_{args.mode}_{tag}_clients{args.num_clients}_seed{args.seed}"
+    output_dir = os.path.join(base_output_dir, exp_subdir)
     os.makedirs(output_dir, exist_ok=True)
     args.output_dir = output_dir
 
@@ -393,10 +395,7 @@ def run_federated_kd_dkd(args):
                 wandb.log(metrics, step=round_idx)
             student_states.append(student_state)
         global_state = aggregate_state_dicts(student_states)
-        exp_tag = (
-            f"{args.method}_{args.mode}_{tag}_clients{args.num_clients}_seed{args.seed}"
-        )
-        history_filename = f"{exp_tag}_round{round_idx}.npz"
+        history_filename = f"round{round_idx}.npz"
         np.savez_compressed(
             os.path.join(args.output_dir, history_filename),
             round=np.array(history["round"], dtype=np.int32),
