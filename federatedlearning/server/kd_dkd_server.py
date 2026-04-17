@@ -393,8 +393,12 @@ def run_federated_kd_dkd(args):
                 wandb.log(metrics, step=round_idx)
             student_states.append(student_state)
         global_state = aggregate_state_dicts(student_states)
+        exp_tag = (
+            f"{args.method}_{args.mode}_{tag}_clients{args.num_clients}_seed{args.seed}"
+        )
+        history_filename = f"{exp_tag}_round{round_idx}.npz"
         np.savez_compressed(
-            os.path.join(args.output_dir, f"fed_history_round{round_idx}.npz"),
+            os.path.join(args.output_dir, history_filename),
             round=np.array(history["round"], dtype=np.int32),
             client=np.array(history["client"], dtype=np.int32),
             student_loss=np.array(history["student_loss"], dtype=np.float32),
